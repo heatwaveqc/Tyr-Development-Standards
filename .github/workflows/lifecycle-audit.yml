@@ -1,0 +1,207 @@
+name: Read-only lifecycle audit
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: inventory
+      pr-number:
+        type: number
+        default: 0
+      branch-budget:
+        type: number
+        default: 20
+      permanent-branches:
+        type: string
+        default: ''
+      protected-donors:
+        type: string
+        default: ''
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Read-only report (no consumer checkout)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AUDIT_MODE: ${{ inputs.mode }}
+          PR_NUMBER: ${{ inputs.pr-number }}
+          BRANCH_BUDGET: ${{ inputs.branch-budget }}
+          PERMANENT_BRANCHES: ${{ inputs.permanent-branches }}
+          PROTECTED_DONORS: ${{ inputs.protected-donors }}
+        run: |
+          python3 - "$AUDIT_MODE" --pr "$PR_NUMBER" <<'TYR_PYTHON'
+          #!/usr/bin/env python3
+          """Read-only repository lifecycle reporting, adapted from TMM."""
+          import argparse
+          import datetime as dt
+          import json
+          import os
+          import urllib.request
+          
+          REPO = os.environ.get("GITHUB_REPOSITORY", "")
+          PERMANENT = set()
+          NOW = dt.datetime.now(dt.timezone.utc)
+          
+          
+          def api(path):
+              req = urllib.request.Request(
+                  "https://api.github.com/repos/" + REPO + path,
+                  method="GET",
+                  headers={"Accept": "application/vnd.github+json",
+                           "Authorization": "Bearer " + os.environ["GITHUB_TOKEN"],
+                           "X-GitHub-Api-Version": "2022-11-28",
+                           "User-Agent": "Tyr-branch-lifecycle", "Content-Type": "application/json"})
+              with urllib.request.urlopen(req, timeout=40) as response:
+                  return json.load(response)
+          
+          
+          def pages(path):
+              rows = []
+              for i in range(1, 101):
+                  part = api(path + ("&" if "?" in path else "?") + f"per_page=100&page={i}")
+                  if not isinstance(part, list):
+                      raise ValueError("expected array: " + path)
+                  rows.extend(part)
+                  if len(part) < 100:
+                      return rows
+              raise ValueError("pagination limit reached: " + path)
+          
+          
+          def source_manifest():
+              # Optional caller-supplied protected donor names; no Minecraft manifest dependency.
+              return [{"branch": name, "name": name} for name in os.environ.get("PROTECTED_DONORS", "").split(",") if name]
+          
+          
+          def local_pr_refs(prs):
+              # Even an external PR targeting our branch is a reason to keep that base.
+              refs = set()
+              for p in prs:
+                  for side in ("head", "base"):
+                      ref = p[side]
+                      repo = ref.get("repo")
+                      if repo is None or repo.get("full_name") == REPO:
+                          refs.add(ref["ref"])
+              return refs
+          
+          
+          def hours(stamp):
+              return (NOW - dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds() / 3600
+          
+          
+          def branch_budget(n):
+              budget = int(os.environ.get("BRANCH_BUDGET", "20"))
+              if budget < 1:
+                  raise ValueError("branch budget must be positive")
+              return "HEALTHY" if n <= budget else "REVIEW" if n <= budget + 10 else "MAINTENANCE"
+          
+          
+          def report(lines):
+              body = "\n".join(str(line) for line in lines) + "\n"
+              print(body, end="")
+              if os.environ.get("GITHUB_STEP_SUMMARY"):
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+                      out.write(body)
+          
+          
+          def inventory():
+              PERMANENT.add(api("")["default_branch"])
+              PERMANENT.update(filter(None, os.environ.get("PERMANENT_BRANCHES", "").split(",")))
+              branches = pages("/branches")
+              prs = pages("/pulls?state=open")
+              closed = pages("/pulls?state=closed&sort=updated&direction=desc")
+              sources = source_manifest()
+              refs = local_pr_refs(prs)
+              donors = {r["branch"] for r in sources}
+              names = {b["name"] for b in branches}
+              merged = {}
+              for p in closed:
+                  h = p["head"]
+                  if p.get("merged_at") and h.get("repo") and h["repo"]["full_name"] == REPO:
+                      if h["ref"] not in merged or merged[h["ref"]]["merged_at"] < p["merged_at"]:
+                          merged[h["ref"]] = p
+              commit_dates = {}
+              lines = [f"## Branch inventory: {len(names)} refs — {branch_budget(len(names))}",
+                       f"{len(prs)} open PRs; {sum(p['draft'] for p in prs)} drafts; {len(donors)} external donor refs.",
+                       "", "Age signals use tip commit time and PR last activity (not branch creation or exact ready time).",
+                       "", "| Branch | Head | Review signals |", "|---|---|---|"]
+              for b in sorted(branches, key=lambda x: x["name"]):
+                  name, sha = b["name"], b["commit"]["sha"]
+                  if sha not in commit_dates:
+                      commit_dates[sha] = api("/commits/" + sha)["commit"]["committer"]["date"]
+                  age = hours(commit_dates[sha])
+                  flags = []
+                  if name in PERMANENT or b.get("protected"):
+                      flags.append("permanent/protected")
+                  else:
+                      if name not in refs and age >= 24:
+                          flags.append("no open PR; tip >=24h")
+                      if age >= 72:
+                          flags.append("tip inactive >=72h")
+                      if name in merged and hours(merged[name]["merged_at"]) >= 24:
+                          flags.append(f"surviving merged PR #{merged[name]['number']}; verify current contents")
+                  if name in refs:
+                      flags.append("open PR dependency")
+                  if name in donors:
+                      flags.append("external donor; retain")
+                  lines.append(f"| {name} | {sha[:12]} | {', '.join(flags) or 'review'} |")
+              lines += ["", "### Open PRs and dependency stacks", "", "| PR | Head → base | Status |", "|---|---|---|"]
+              for p in sorted(prs, key=lambda x:x["number"]):
+                  status = "draft" if p["draft"] else "ready (review)"
+                  if not p["draft"] and hours(p["updated_at"]) >= 24:
+                      status += "; no PR update >=24h"
+                  lines.append(f"| #{p['number']} | {p['head']['ref']} → {p['base']['ref']} | {status} |")
+              lines += ["", "### Caller-declared protected donors"]
+              for name in sorted(donors):
+                  lines.append(f"- {name}: " + ("retain" if name in names else "missing live ref; review"))
+              lines += ["", "Advisory only. No deletion or merge."]
+              report(lines)
+          
+          
+          def collision(number):
+              prs = pages("/pulls?state=open")
+              current = next((p for p in prs if p["number"] == number), None)
+              if current is None:
+                  report(["PR closed or absent; no collision scan."])
+                  return
+              def paths(n):
+                  rows = pages(f"/pulls/{n}/files")
+                  if len(rows) >= 3000:
+                      raise ValueError("GitHub changed-files cap reached; manual review required")
+                  return {r[k] for r in rows for k in ("filename", "previous_filename") if r.get(k)}
+              own = paths(number)
+              lines = [f"## Changed-path overlap: PR #{number}",
+                       "Exact same-base path intersections only; not a semantic conflict or merge approval."]
+              for p in prs:
+                  if p["number"] == number or p["base"]["ref"] != current["base"]["ref"]:
+                      continue
+                  overlap = own & paths(p["number"])
+                  if overlap:
+                      lines.append(f"- PR #{p['number']}: {len(overlap)} path(s): " + ", ".join(sorted(overlap)[:25]))
+              if len(lines) == 2:
+                  lines.append("No same-base exact path overlaps found.")
+              report(lines)
+          
+          
+          
+          def main():
+              if not REPO or "/" not in REPO:
+                  raise ValueError("GITHUB_REPOSITORY required")
+              p = argparse.ArgumentParser()
+              p.add_argument("mode", choices=["inventory", "collision"])
+              p.add_argument("--pr", type=int)
+              a = p.parse_args()
+              if a.mode == "inventory":
+                  inventory()
+              elif a.pr and a.pr > 0:
+                  collision(a.pr)
+              else:
+                  p.error("collision requires positive --pr")
+          
+          if __name__ == "__main__":
+              main()
+          TYR_PYTHON
