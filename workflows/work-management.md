@@ -23,6 +23,22 @@ Use these exact searchable labels on issues and pull requests. They express evid
 
 Repositories adopting this revision must establish these labels (colors are cosmetic; exact names and meaning are mandatory) and reconcile existing open work using live evidence. If label administration or verification is unavailable, record the exact label in the current description/ledger as a temporary fallback, report the capability blocker and arrange authorized reconciliation; do not claim labels were applied without verification. Do not delete or overwrite unrelated labels.
 
+## Deferred work and automatic reactivation
+
+For every deferred issue, PR or independently actionable slice, record the current status, reason, reactivation date (ISO `YYYY-MM-DD`, or `none`), reactivation condition (verifiable event, `manual owner approval`, or `none`), and intended reactivation status using the existing vocabulary. Record release target separately; it is not a reactivation trigger. Example:
+
+- Status: `status: deferred`
+- Reactivation date: `2026-11-27`
+- Reactivation condition: `none`
+- Reactivation status: `status: needs-decision`
+- Reason: owner-approved post-preview work
+
+If both a date and a condition are specified, both must be satisfied. A date becomes eligible at the start of that date in the project's declared timezone (record timezone if not established); a manual approval condition requires explicit owner authorization. Never invent dates or approvals for legacy holds. If intent is unclear, record an unresolved condition and request clarification through normal triage, without activating the work. Keep metadata at slice level for mixed parents; link corresponding PRs to avoid duplicate activation.
+
+The designated backlog/ledger reconciliation owner (or existing scheduled reconciliation agent) checks due deferred work on each normal cycle; no separate automation or new status labels are required. Verify the current open item, latest owner instruction, trigger evidence (for example exact dependency merge or compatible published version), ownership, dependencies, supersession and current source/check state. If the trigger is satisfied, replace the deferred status with the intended status **only if its entry criteria are met**, otherwise use the actual evidenced actionable status (e.g. needs-triage, needs-research, needs-decision or blocked). Record the date, evidence, prior/new state and next owner/action in the item and canonical ledger, reconcile parent projections and notify the responsible writer. Do not reactivate closed or superseded items or overwrite a newer hold. If the trigger is not satisfied or cannot be verified, keep the deferral, record the blocker and next review. Repeated runs must be idempotent.
+
+Reactivation makes a slice eligible for normal prioritization, not an automatic coding claim, merge, build, release, destructive action or permission to expand approved scope. Existing writer, evidence, QA and local authorization gates still apply. Report overdue or unverifiable triggers separately from active work.
+
 ## Completeness and mixed-status issues
 
 - Issues represent acceptance of a feature or work goal; PRs represent a specific reviewable source or documentation slice. A PR's status describes its own scoped deliverable, not all work under the parent issue. Normally one status label per PR. Keep proposals needing design or unfinished code in draft; use non-draft for actual review-ready scope, not as a substitute for a status label. Native draft/mergeability/green CI alone never establish readiness. Unimplemented ideas normally belong in issues, not new PRs.
