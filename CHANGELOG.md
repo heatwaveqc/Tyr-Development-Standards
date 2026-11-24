@@ -1,0 +1,3 @@
+# Changelog
+## v1 — 2026-11-23
+Initial portable core, engineering, branch lifecycle, work management, QA, Minecraft profile and pinned adoption template. Derived from TMM [AGENTS.md](https://github.com/heatwaveqc/Too-Much-Magic-Modpack/blob/main/AGENTS.md) blob 8f2dd26f208e5138c8740fb7edfad6502bd5fa29 and [branch lifecycle](https://github.com/heatwaveqc/Too-Much-Magic-Modpack/blob/main/docs/BRANCH-LIFECYCLE.md) blob f76027ad5321848b0b54af220ab99a56220f3e79. Project topology, automation timing, dispatch consoles and release rules intentionally remain local. Documentation, not deployed enforcement.

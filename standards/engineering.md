@@ -1,0 +1,2 @@
+# Engineering
+Inspect actual implementation, interfaces, dependency versions and configuration before adding code. Prefer reusable handlers, canonical registries, data-driven variation, narrow edits, stability and performance. Avoid speculative scope, duplicate sources of truth and unnecessary dependencies. Test failure paths and edge cases. Distinguish verified research from hypotheses. Record material architectural decisions and acceptance criteria; escalate unresolved owner choices while executing independent approved slices.
